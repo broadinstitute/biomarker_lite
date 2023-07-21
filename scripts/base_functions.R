@@ -171,9 +171,12 @@ univariate_biomarker_table <- function(Y, W = NULL,
     return(res)
   }
   
-  RES <- apply(Y, 2, f, simplify = FALSE)
-  for(nn in names(RES)){
+  RES = list(); ix= 1
+  for(nn in colnames(Y)){
+    print(paste0(ix ,"/", dim(Y)[2], " - ", nn)) 
+    RES[[nn]] = f(Y[,nn])
     RES[[nn]] %<>% dplyr::mutate(y = nn) 
+    ix = ix + 1
   }
   
   RES %<>% dplyr::bind_rows()
@@ -217,7 +220,7 @@ univariate_biomarker_table <- function(Y, W = NULL,
         coord_cartesian(ylim = c(0, NA),
                         xlim = c(-1,1)) + 
         theme_clean(#base_family = "GillSans",
-          base_size = 16) + 
+          base_size = 14) + 
         theme(legend.position = "bottom") + 
         guides(color=guide_legend(nrow=2,byrow=TRUE, 
                                   label.theme = element_text(size = 10),

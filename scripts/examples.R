@@ -10,7 +10,6 @@ source("scripts/base_functions.R")
 
 CRISPRGeneEffect <- load.from.taiga(data.name='internal-23q2-1e49', data.version=95, data.file='CRISPRGeneEffect')
 colnames(CRISPRGeneEffect) %<>% word()
-#CRISPRGeneEffect <- CRISPRGeneEffect[, apply(CRISPRGeneEffect, 2,  function(x) var(x, na.rm = T)) > 0.01]
 
 results <- robust_linear_model(CRISPRGeneEffect, CRISPRGeneEffect[, "CTNNB1"])
 
@@ -78,3 +77,72 @@ res_public <- univariate_biomarker_table(Y = CRISPRGeneEffect[, "CTNNB1", drop =
                                            path = "results/CTNNB1_public")
 
 
+# ONC REF # don't run!  ----  
+
+AUC.matrix <- load.from.taiga(data.name='prism-oncref001-portal-files--3044', data.version=4, data.file='AUC_matrix')
+IC50.matrix <- load.from.taiga(data.name='prism-oncref001-portal-files--3044', data.version=4, data.file='IC50_matrix')
+viability.matrix <- load.from.taiga(data.name='prism-oncref001-portal-files--3044', data.version=4, data.file='viability_matrix')
+
+Condition.annotations <- load.from.taiga(data.name='prism-oncref001-portal-files--3044', data.version=4, data.file='Condition_annotations')
+Model.annotations <- load.from.taiga(data.name='prism-oncref001-portal-files--3044', data.version=4, data.file='Model_annotations')
+compound.list <- load.from.taiga(data.name='prism-oncref001-portal-files--3044', data.version=4, data.file='compound_list')
+
+V = viability.matrix %>% 
+  reshape2::melt() %>% 
+  dplyr::left_join(Condition.annotations, by = c("Var1" = "index")) %>%
+  dplyr::left_join(Model.annotations, by = c("Var2" = "index")) %>% 
+  dplyr::group_by(compound_name, cell_line_name, dose) %>% 
+  dplyr::summarise(LFC = median(value, na.rm = T)) %>%
+  dplyr::mutate(dose = as.character(dose)) %>% 
+  dplyr::bind_rows(AUC.matrix %>% 
+                     reshape2::melt() %>%
+                     dplyr::rename(LFC = value, compound_name = Var1, cell_line_name = Var2) %>% 
+                     dplyr::mutate(dose = "log2(AUC)", LFC = log2(LFC)) ) %>% 
+  dplyr::bind_rows(IC50.matrix %>% 
+                     reshape2::melt() %>%
+                     dplyr::rename(LFC = value, compound_name = Var1, cell_line_name = Var2) %>% 
+                     dplyr::mutate(dose = "log2(IC50)", LFC = log2(LFC)) ) %>%
+  dplyr::left_join(compound.list %>% 
+                     dplyr::distinct(IDs, Drug.Name, Target),
+                   by = c("compound_name" = "IDs")) %>% 
+  dplyr::mutate(cn = paste0(compound_name, "::", dose,
+                            "::", Drug.Name, "::", Target)) %>% 
+  dplyr::ungroup() %>%
+  dplyr::filter(is.finite(LFC)) %>% 
+  reshape2::acast(cell_line_name ~ cn, value.var = "LFC")
+
+
+res_onc_public <- univariate_biomarker_table(Y = V, 
+                                         features = "public", 
+                                         path = "results/onc_ref")
+
+res_onc_public <- data.table::fread("results/onc_ref.csv") %>% 
+  dplyr::filter(ns > 9, n > 24) %>% 
+  dplyr::group_by(y, feature.set) %>% 
+  dplyr::arrange(rho) %>% dplyr::mutate(ix = 1:n()) %>% 
+  dplyr::arrange(-rho) %>% dplyr::mutate(iix = 1:n()) %>% 
+  dplyr::ungroup() %>% 
+  dplyr::filter((ix < 26) | (iix < 26)) %>% 
+  dplyr::mutate(IDs = word(y, sep = fixed("::")),
+                dose = word(y,2, sep = fixed("::")),
+                Drug.Name = word(y, 3, sep = fixed("::")),
+                target = word(y, 4, sep = fixed("::"))) %>%
+  dplyr::group_by(IDs, x) %>%
+  dplyr::mutate(m = n()) %>% 
+  dplyr::ungroup() %>% 
+  dplyr::filter(m > 1)
+
+
+res_onc_public %>% 
+  dplyr::group_by(feature.set, IDs) %>%
+  dplyr::top_n(1, m) %>% 
+  dplyr::top_n(1, abs(rho)) %>% 
+  dplyr::ungroup() %>% 
+  dplyr::filter(feature.set %in% c("REP", "MUT", "EXP", "XPR", "RPPA", "RNAi")) %>% 
+  dplyr::mutate(feature = paste0(feature," - m:", m , " - r:", round(rho,2), "  @ ", dose)) %>% 
+  dplyr::select(-rho, -dose, -beta, -n, -ns, -q.val, -q.val.rob, -ix, -iix, -x, -y, -m, -p.val, -p.val.rob) %>% 
+  dplyr::distinct() %>% 
+  dplyr::filter(Drug.Name != "NA") %>% 
+  dplyr::group_by(IDs, feature.set) %>%
+  tidyr::pivot_wider(names_from = "feature.set", values_from = "feature") %>%
+  View
